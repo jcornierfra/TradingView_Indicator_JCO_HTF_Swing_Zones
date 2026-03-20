@@ -2,7 +2,7 @@
 // © jcornier
 //
 // Version: 1.1
-// GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_HTF_Zones
+// GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_HTF_Swing_Zones
 //
 // Description: Draws supply/demand zones based on HTF swing highs and lows.
 //              Each zone covers the wick area of a pivot candle (between body and wick tip).
