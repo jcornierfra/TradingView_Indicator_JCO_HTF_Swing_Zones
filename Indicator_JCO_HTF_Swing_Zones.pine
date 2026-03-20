@@ -1,0 +1,244 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © jcornier
+//
+// Version: 1.1
+// GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_HTF_Zones
+//
+// Description: Draws supply/demand zones based on HTF swing highs and lows.
+//              Each zone covers the wick area of a pivot candle (between body and wick tip).
+//              Features include:
+//              - Configurable HTF timeframe and pivot length
+//              - N closest swing high zones above current price (ordered by wick proximity)
+//              - N closest swing low zones below current price (ordered by wick proximity)
+//              - Stateless backward scan on last bar only; zone overlap is intentional
+//                (overlapping wicks indicate high-impact price areas)
+//              - Configurable zone colors, border, and midline
+//
+// Changelog:
+//   v1.1 - 2026-03-20
+//     - Fixed zone positioning: xloc.bar_time to anchor boxes correctly across session gaps
+//     - Fixed zone selection: wick-to-wick ladder (z_top > last_h_top) replaces
+//       body-to-wick, so spike candles with small bodies are no longer skipped
+//   v1.0 - 2026-03-20
+//     - Initial release
+
+//@version=6
+indicator("JCO HTF Swing Zones", overlay=true, max_boxes_count=500, max_lines_count=500)
+
+// ══════════════════════════════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════════════════════════════
+grpC = "Configuration"
+i_tf    = input.timeframe("240",  "Timeframe HTF",                         group=grpC)
+i_nb_h  = input.int(3,   "Nb zones High",      minval=1,  maxval=10,       group=grpC)
+i_nb_l  = input.int(3,   "Nb zones Low",       minval=1,  maxval=10,       group=grpC)
+i_plen  = input.int(5,   "Longueur pivot",     minval=2,  maxval=20,       group=grpC)
+i_merge = input.float(0.15, "Fusion si dist. < (%)", minval=0, maxval=5,
+          step=0.05,                                                         group=grpC)
+
+grpA = "Apparence"
+i_zcol  = input.color(color.new(color.gray, 85),  "Couleur zone",          group=grpA)
+i_bcol  = input.color(color.new(color.gray, 70),  "Bordure",               group=grpA)
+i_smid  = input.bool(true,  "Afficher le milieu",                           group=grpA)
+i_mcol  = input.color(color.gray,                 "Couleur milieu",         group=grpA)
+i_mw    = input.int(1,  "Epaisseur milieu", minval=1, maxval=4,             group=grpA)
+
+// ══════════════════════════════════════════════════════════════
+// HTF DATA
+// ══════════════════════════════════════════════════════════════
+htf_ph  = request.security(syminfo.tickerid, i_tf,
+            ta.pivothigh(i_plen, i_plen), lookahead=barmerge.lookahead_off)
+htf_pl  = request.security(syminfo.tickerid, i_tf,
+            ta.pivotlow (i_plen, i_plen), lookahead=barmerge.lookahead_off)
+
+htf_phb = request.security(syminfo.tickerid, i_tf,
+            not na(ta.pivothigh(i_plen, i_plen)) ?
+              math.max(open[i_plen], close[i_plen]) :
+              float(na),
+            lookahead=barmerge.lookahead_off)
+
+htf_plb = request.security(syminfo.tickerid, i_tf,
+            not na(ta.pivotlow(i_plen, i_plen)) ?
+              math.min(open[i_plen], close[i_plen]) :
+              float(na),
+            lookahead=barmerge.lookahead_off)
+
+// Timestamp d'ouverture de la bougie pivot (pour calculer son bar_index exact)
+htf_ph_time = request.security(syminfo.tickerid, i_tf,
+                time[i_plen], lookahead=barmerge.lookahead_off)
+
+htf_pl_time = request.security(syminfo.tickerid, i_tf,
+                time[i_plen], lookahead=barmerge.lookahead_off)
+
+
+// Buffers étendus pour le scan rétrograde (accès dynamique series[k])
+max_bars_back(htf_ph,      5000)
+max_bars_back(htf_pl,      5000)
+max_bars_back(htf_phb,     5000)
+max_bars_back(htf_plb,     5000)
+max_bars_back(htf_ph_time, 5000)
+max_bars_back(htf_pl_time, 5000)
+max_bars_back(time,        5000)
+
+// ══════════════════════════════════════════════════════════════
+// ARRAYS
+// ══════════════════════════════════════════════════════════════
+var array<float> ht = array.new<float>()
+var array<float> hb = array.new<float>()
+var array<int>   hi = array.new<int>()    // bar_index de la bougie pivot
+var array<box>   hx = array.new<box>()
+var array<line>  hm = array.new<line>()
+
+var array<float> lt = array.new<float>()
+var array<float> lb = array.new<float>()
+var array<int>   li = array.new<int>()    // bar_index de la bougie pivot
+var array<box>   lx = array.new<box>()
+var array<line>  lm = array.new<line>()
+
+// ══════════════════════════════════════════════════════════════
+// HELPERS
+// bar_l : bar_index de la bougie pivot  →  xloc.bar_index (par défaut)
+// Cela garantit que les rectangles suivent l'échelle et les déplacements du graphique
+// ══════════════════════════════════════════════════════════════
+f_midline(int bar_l, float top, float bot) =>
+    float mid = (top + bot) / 2.0
+    line.new(bar_l, mid, bar_l + 1, mid,
+        color  = i_smid ? i_mcol : color.new(color.white, 100),
+        width  = i_mw,
+        extend = extend.right,
+        xloc   = xloc.bar_time)
+
+f_add_h(float top, float bot, int bar_l) =>
+    box b = box.new(bar_l, top, bar_l + 1, bot,
+        bgcolor      = i_zcol,
+        border_color = i_bcol,
+        extend       = extend.right,
+        xloc         = xloc.bar_time)
+    line m = f_midline(bar_l, top, bot)
+    ht.push(top)
+    hb.push(bot)
+    hi.push(bar_l)
+    hx.push(b)
+    hm.push(m)
+
+f_add_l(float top, float bot, int bar_l) =>
+    box b = box.new(bar_l, top, bar_l + 1, bot,
+        bgcolor      = i_zcol,
+        border_color = i_bcol,
+        extend       = extend.right,
+        xloc         = xloc.bar_time)
+    line m = f_midline(bar_l, top, bot)
+    lt.push(top)
+    lb.push(bot)
+    li.push(bar_l)
+    lx.push(b)
+    lm.push(m)
+
+f_del_h(int idx) =>
+    box.delete(hx.get(idx))
+    line.delete(hm.get(idx))
+    ht.remove(idx)
+    hb.remove(idx)
+    hi.remove(idx)
+    hx.remove(idx)
+    hm.remove(idx)
+
+f_del_l(int idx) =>
+    box.delete(lx.get(idx))
+    line.delete(lm.get(idx))
+    lt.remove(idx)
+    lb.remove(idx)
+    li.remove(idx)
+    lx.remove(idx)
+    lm.remove(idx)
+
+// ══════════════════════════════════════════════════════════════
+// FUSION  (fonction utilitaire, appelée après le scan)
+// ══════════════════════════════════════════════════════════════
+f_try_merge_h() =>
+    bool merged = false
+    int n = ht.size()
+    if n >= 2
+        for i = n - 1 to 1
+            if not merged
+                for j = i - 1 to 0
+                    float t1 = ht.get(i), float b1 = hb.get(i)
+                    float t2 = ht.get(j), float b2 = hb.get(j)
+                    bool  overlap  = t1 >= b2 and t2 >= b1
+                    float gap_pct  = overlap ? 0.0 :
+                                      (b1 > t2 ? b1 - t2 : b2 - t1) / close * 100.0
+                    if overlap or gap_pct <= i_merge
+                        float new_top = math.max(t1, t2)
+                        float new_bot = math.min(b1, b2)
+                        int   new_bar = math.min(hi.get(i), hi.get(j))
+                        f_del_h(i), f_del_h(j)
+                        f_add_h(new_top, new_bot, new_bar)
+                        merged := true
+                        break
+    merged
+
+f_try_merge_l() =>
+    bool merged = false
+    int n = lt.size()
+    if n >= 2
+        for i = n - 1 to 1
+            if not merged
+                for j = i - 1 to 0
+                    float t1 = lt.get(i), float b1 = lb.get(i)
+                    float t2 = lt.get(j), float b2 = lb.get(j)
+                    bool  overlap  = t1 >= b2 and t2 >= b1
+                    float gap_pct  = overlap ? 0.0 :
+                                      (b1 > t2 ? b1 - t2 : b2 - t1) / close * 100.0
+                    if overlap or gap_pct <= i_merge
+                        float new_top = math.max(t1, t2)
+                        float new_bot = math.min(b1, b2)
+                        int   new_bar = math.min(li.get(i), li.get(j))
+                        f_del_l(i), f_del_l(j)
+                        f_add_l(new_top, new_bot, new_bar)
+                        merged := true
+                        break
+    merged
+
+// ══════════════════════════════════════════════════════════════
+// SCAN STATELESS  –  exécuté sur la dernière barre uniquement
+// Scan temporel du plus récent au plus ancien.
+// Règle : chaque nouveau HIGH doit avoir un WICK au-dessus du
+// wick précédent ; chaque nouveau LOW, un wick en-dessous.
+// Le chevauchement body/wick entre zones est accepté.
+// ══════════════════════════════════════════════════════════════
+if barstate.islast
+
+    // Effacer les zones précédentes
+    while ht.size() > 0
+        f_del_h(0)
+    while lt.size() > 0
+        f_del_l(0)
+
+    int   found_h    = 0
+    int   found_l    = 0
+    int   max_k      = math.min(bar_index, 5000)
+    float last_h_top = close   // wick de référence pour les hauts
+    float last_l_bot = close   // wick de référence pour les bas
+
+    for k = 0 to max_k
+        if found_h >= i_nb_h and found_l >= i_nb_l
+            break
+
+        // Pivot haut : accepté si son WICK est au-dessus du wick précédent
+        if found_h < i_nb_h and not na(htf_ph[k]) and na(htf_ph[k + 1])
+            float z_top = htf_ph[k]
+            float z_bot = htf_phb[k]
+            if not na(z_bot) and z_top > z_bot and z_top > last_h_top
+                f_add_h(z_top, z_bot, htf_ph_time[k])
+                last_h_top := z_top
+                found_h   += 1
+
+        // Pivot bas : accepté si son WICK est en-dessous du wick précédent
+        if found_l < i_nb_l and not na(htf_pl[k]) and na(htf_pl[k + 1])
+            float z_top = htf_plb[k]
+            float z_bot = htf_pl[k]
+            if not na(z_top) and z_top > z_bot and z_bot < last_l_bot
+                f_add_l(z_top, z_bot, htf_pl_time[k])
+                last_l_bot := z_bot
+                found_l   += 1
+
