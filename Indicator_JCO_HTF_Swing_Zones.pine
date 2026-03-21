@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.1
+// Version: 1.2
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_HTF_Swing_Zones
 //
 // Description: Draws supply/demand zones based on HTF swing highs and lows.
@@ -15,6 +15,8 @@
 //              - Configurable zone colors, border, and midline
 //
 // Changelog:
+//   v1.2 - 2026-03-21
+//     - Removed unused merge/fusion parameter and functions (dead code cleanup)
 //   v1.1 - 2026-03-20
 //     - Fixed zone positioning: xloc.bar_time to anchor boxes correctly across session gaps
 //     - Fixed zone selection: wick-to-wick ladder (z_top > last_h_top) replaces
@@ -33,8 +35,6 @@ i_tf    = input.timeframe("240",  "Timeframe HTF",                         group
 i_nb_h  = input.int(3,   "Nb zones High",      minval=1,  maxval=10,       group=grpC)
 i_nb_l  = input.int(3,   "Nb zones Low",       minval=1,  maxval=10,       group=grpC)
 i_plen  = input.int(5,   "Longueur pivot",     minval=2,  maxval=20,       group=grpC)
-i_merge = input.float(0.15, "Fusion si dist. < (%)", minval=0, maxval=5,
-          step=0.05,                                                         group=grpC)
 
 grpA = "Apparence"
 i_zcol  = input.color(color.new(color.gray, 85),  "Couleur zone",          group=grpA)
@@ -151,53 +151,6 @@ f_del_l(int idx) =>
     li.remove(idx)
     lx.remove(idx)
     lm.remove(idx)
-
-// ══════════════════════════════════════════════════════════════
-// FUSION  (fonction utilitaire, appelée après le scan)
-// ══════════════════════════════════════════════════════════════
-f_try_merge_h() =>
-    bool merged = false
-    int n = ht.size()
-    if n >= 2
-        for i = n - 1 to 1
-            if not merged
-                for j = i - 1 to 0
-                    float t1 = ht.get(i), float b1 = hb.get(i)
-                    float t2 = ht.get(j), float b2 = hb.get(j)
-                    bool  overlap  = t1 >= b2 and t2 >= b1
-                    float gap_pct  = overlap ? 0.0 :
-                                      (b1 > t2 ? b1 - t2 : b2 - t1) / close * 100.0
-                    if overlap or gap_pct <= i_merge
-                        float new_top = math.max(t1, t2)
-                        float new_bot = math.min(b1, b2)
-                        int   new_bar = math.min(hi.get(i), hi.get(j))
-                        f_del_h(i), f_del_h(j)
-                        f_add_h(new_top, new_bot, new_bar)
-                        merged := true
-                        break
-    merged
-
-f_try_merge_l() =>
-    bool merged = false
-    int n = lt.size()
-    if n >= 2
-        for i = n - 1 to 1
-            if not merged
-                for j = i - 1 to 0
-                    float t1 = lt.get(i), float b1 = lb.get(i)
-                    float t2 = lt.get(j), float b2 = lb.get(j)
-                    bool  overlap  = t1 >= b2 and t2 >= b1
-                    float gap_pct  = overlap ? 0.0 :
-                                      (b1 > t2 ? b1 - t2 : b2 - t1) / close * 100.0
-                    if overlap or gap_pct <= i_merge
-                        float new_top = math.max(t1, t2)
-                        float new_bot = math.min(b1, b2)
-                        int   new_bar = math.min(li.get(i), li.get(j))
-                        f_del_l(i), f_del_l(j)
-                        f_add_l(new_top, new_bot, new_bar)
-                        merged := true
-                        break
-    merged
 
 // ══════════════════════════════════════════════════════════════
 // SCAN STATELESS  –  exécuté sur la dernière barre uniquement
