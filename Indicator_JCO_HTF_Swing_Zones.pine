@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.4
+// Version: 1.5
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_HTF_Swing_Zones
 //
 // Description: Draws supply/demand zones based on HTF swing highs and lows.
@@ -16,6 +16,10 @@
 //              - Configurable zone colors, border, and midline
 //
 // Changelog:
+//   v1.5 - 2026-03-23
+//     - Zone fusion: overlapping zones are merged into one (max extent, oldest timestamp).
+//       The zone counter decrements only once per merged group.
+//       HTF history buffer increased to 2000 bars (~2.7 years of H4 data).
 //   v1.4 - 2026-03-23
 //     - All calculations now use HTF bar space (one sample per closed HTF bar).
 //       Eliminates timeframe-dependent behaviour (e.g. zones missing on 15-minute charts).
@@ -81,7 +85,7 @@ htf_close    = request.security(syminfo.tickerid, i_tf,
 // HISTORIQUE HTF  –  une entrée par bougie HTF clôturée
 // Limité à MAX_HTF bougies HTF (suffisant pour tout timeframe graphique).
 // ══════════════════════════════════════════════════════════════
-MAX_HTF = 500
+MAX_HTF = 2000
 
 var array<float> arr_ph      = array.new<float>()
 var array<float> arr_phb     = array.new<float>()
@@ -201,36 +205,71 @@ if barstate.islast
     float last_h_top = close
     float last_l_bot = close
 
-    for k = 0 to n - 1
+    // k = -1 : bougie HTF en cours (valeurs live, pas encore dans les tableaux)
+    // k >= 0 : bougies HTF clôturées (tableaux)
+    for k = -1 to n - 1
         if found_h >= i_nb_h and found_l >= i_nb_l
             break
 
+        bool  cur      = k < 0
+        float ph_val   = cur ? htf_ph        : arr_ph.get(k)
+        float phb_val  = cur ? htf_phb       : arr_phb.get(k)
+        float pl_val   = cur ? htf_pl        : arr_pl.get(k)
+        float plb_val  = cur ? htf_plb       : arr_plb.get(k)
+        int   ph_t     = cur ? htf_ph_time   : arr_ph_time.get(k)
+        int   pl_t     = cur ? htf_pl_time   : arr_pl_time.get(k)
+        int   mit_end  = math.max(k, 0) - 1  // borne sup de la boucle de mitigation
+
         // Pivot haut : accepté si son WICK est au-dessus du wick précédent
-        if found_h < i_nb_h and not na(arr_ph.get(k))
-            float z_top = arr_ph.get(k)
-            float z_bot = arr_phb.get(k)
+        if found_h < i_nb_h and not na(ph_val)
+            float z_top = ph_val
+            float z_bot = phb_val
             if not na(z_bot) and z_top > z_bot and z_top > last_h_top
                 bool mitigated = false
-                for m = 0 to k - 1
+                for m = 0 to mit_end
                     if arr_close.get(m) > z_top
                         mitigated := true
                         break
                 if not mitigated
-                    f_add_h(z_top, z_bot, arr_ph_time.get(k))
+                    if ht.size() > 0
+                        float pt = ht.get(ht.size() - 1)
+                        float pb = hb.get(hb.size() - 1)
+                        int   pi = hi.get(hi.size() - 1)
+                        if z_top >= pb and pt >= z_bot
+                            // Fusion : étendue max, timestamp le plus ancien
+                            f_del_h(ht.size() - 1)
+                            f_add_h(math.max(z_top, pt), math.min(z_bot, pb), math.min(ph_t, pi))
+                        else
+                            f_add_h(z_top, z_bot, ph_t)
+                            found_h += 1
+                    else
+                        f_add_h(z_top, z_bot, ph_t)
+                        found_h += 1
                     last_h_top := z_top
-                    found_h   += 1
 
         // Pivot bas : accepté si son WICK est en-dessous du wick précédent
-        if found_l < i_nb_l and not na(arr_pl.get(k))
-            float z_top = arr_plb.get(k)
-            float z_bot = arr_pl.get(k)
+        if found_l < i_nb_l and not na(pl_val)
+            float z_top = plb_val
+            float z_bot = pl_val
             if not na(z_top) and z_top > z_bot and z_bot < last_l_bot
                 bool mitigated = false
-                for m = 0 to k - 1
+                for m = 0 to mit_end
                     if arr_close.get(m) < z_bot
                         mitigated := true
                         break
                 if not mitigated
-                    f_add_l(z_top, z_bot, arr_pl_time.get(k))
+                    if lt.size() > 0
+                        float pt = lt.get(lt.size() - 1)
+                        float pb = lb.get(lb.size() - 1)
+                        int   pi = li.get(li.size() - 1)
+                        if z_top >= pb and pt >= z_bot
+                            // Fusion : étendue max, timestamp le plus ancien
+                            f_del_l(lt.size() - 1)
+                            f_add_l(math.max(z_top, pt), math.min(z_bot, pb), math.min(pl_t, pi))
+                        else
+                            f_add_l(z_top, z_bot, pl_t)
+                            found_l += 1
+                    else
+                        f_add_l(z_top, z_bot, pl_t)
+                        found_l += 1
                     last_l_bot := z_bot
-                    found_l   += 1

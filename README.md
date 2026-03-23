@@ -19,6 +19,7 @@ The indicator scans backwards from the current bar to find the **N closest unvio
   - Low zones: each new zone must have its **wick tip strictly below** the wick tip of the previous one
   - Zones are ordered from closest to furthest wick from price; body overlap between adjacent zones is allowed and expected — it signals high-impact price areas touched by multiple pivot wicks
 - **Mitigation filter**: A pivot zone is skipped if any more recent **closed** HTF candle has closed beyond its wick tip (close > wick for highs, close < wick for lows) — only untested zones are displayed; the current (forming) HTF bar is excluded from this check
+- **Zone fusion**: Overlapping zones are automatically merged into one (maximum extent, anchored at the oldest pivot); the zone counter decrements only once per merged group
 - **Midline**: Optional horizontal line at the center of each zone
 
 ## Parameters
@@ -46,10 +47,15 @@ The indicator scans backwards from the current bar to find the **N closest unvio
 
 - All calculations use **HTF bar space**: one sample is recorded per closed HTF bar, making results identical regardless of the chart timeframe
 - The scan runs on the last bar only (`barstate.islast`) and always reflects the current market state
-- HTF history is limited to the last 500 closed HTF bars, which is more than enough for any chart timeframe
+- HTF history covers the last 2000 closed HTF bars (~2.7 years of H4 data at 6.5 h/day)
 - If fewer than N qualifying pivots exist within the lookback window, fewer zones will be displayed
 
 ## Changelog
+
+### v1.5 — 2026-03-23
+
+- Zone fusion: overlapping zones are automatically merged into one (maximum extent, anchored at the oldest pivot); the zone counter decrements only once per merged group
+- HTF history buffer increased from 500 to 2000 bars (~2.7 years of H4 data), fixing missing zones on instruments with deep history
 
 ### v1.4 — 2026-03-23
 
