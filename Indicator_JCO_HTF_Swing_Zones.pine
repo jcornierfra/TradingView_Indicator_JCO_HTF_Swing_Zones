@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.3
+// Version: 1.4
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_HTF_Swing_Zones
 //
 // Description: Draws supply/demand zones based on HTF swing highs and lows.
@@ -12,9 +12,14 @@
 //              - N closest swing low zones below current price (ordered by wick proximity)
 //              - Stateless backward scan on last bar only; zone overlap is intentional
 //                (overlapping wicks indicate high-impact price areas)
+//              - Mitigation filter: zones closed beyond wick by a more recent HTF candle are skipped
 //              - Configurable zone colors, border, and midline
 //
 // Changelog:
+//   v1.4 - 2026-03-23
+//     - All calculations now use HTF bar space (one sample per closed HTF bar).
+//       Eliminates timeframe-dependent behaviour (e.g. zones missing on 15-minute charts).
+//       The chart timeframe is only used to anchor the start of drawn rectangles.
 //   v1.3 - 2026-03-23
 //     - Added mitigation filter: a zone is skipped if any more recent HTF candle
 //       has closed beyond the wick (close > wick for highs, close < wick for lows)
@@ -48,63 +53,81 @@ i_mw    = input.int(1,  "Epaisseur milieu", minval=1, maxval=4,             grou
 
 // ══════════════════════════════════════════════════════════════
 // HTF DATA
+// Toutes les series sont échantillonnées avec [1] au moment où
+// ta.change(htf_bar_time) détecte une nouvelle bougie HTF :
+// à cet instant, [1] pointe vers la dernière barre de la bougie
+// HTF qui vient de se clôturer, ce qui donne des valeurs finalisées.
 // ══════════════════════════════════════════════════════════════
-htf_ph  = request.security(syminfo.tickerid, i_tf,
-            ta.pivothigh(i_plen, i_plen), lookahead=barmerge.lookahead_off)
-htf_pl  = request.security(syminfo.tickerid, i_tf,
-            ta.pivotlow (i_plen, i_plen), lookahead=barmerge.lookahead_off)
-
-htf_phb = request.security(syminfo.tickerid, i_tf,
-            not na(ta.pivothigh(i_plen, i_plen)) ?
-              math.max(open[i_plen], close[i_plen]) :
-              float(na),
-            lookahead=barmerge.lookahead_off)
-
-htf_plb = request.security(syminfo.tickerid, i_tf,
-            not na(ta.pivotlow(i_plen, i_plen)) ?
-              math.min(open[i_plen], close[i_plen]) :
-              float(na),
-            lookahead=barmerge.lookahead_off)
-
-// Timestamp d'ouverture de la bougie pivot (pour calculer son bar_index exact)
-htf_ph_time = request.security(syminfo.tickerid, i_tf,
-                time[i_plen], lookahead=barmerge.lookahead_off)
-
-htf_pl_time = request.security(syminfo.tickerid, i_tf,
-                time[i_plen], lookahead=barmerge.lookahead_off)
-
-// Close HTF pour le filtre de mitigation
-htf_close = request.security(syminfo.tickerid, i_tf, close, lookahead=barmerge.lookahead_off)
-
-// Buffers étendus pour le scan rétrograde (accès dynamique series[k])
-max_bars_back(htf_ph,      5000)
-max_bars_back(htf_pl,      5000)
-max_bars_back(htf_phb,     5000)
-max_bars_back(htf_plb,     5000)
-max_bars_back(htf_ph_time, 5000)
-max_bars_back(htf_pl_time, 5000)
-max_bars_back(htf_close,   5000)
-max_bars_back(time,        5000)
+htf_bar_time = request.security(syminfo.tickerid, i_tf,
+                   time,                                                    lookahead=barmerge.lookahead_off)
+htf_ph       = request.security(syminfo.tickerid, i_tf,
+                   ta.pivothigh(i_plen, i_plen),                            lookahead=barmerge.lookahead_off)
+htf_pl       = request.security(syminfo.tickerid, i_tf,
+                   ta.pivotlow (i_plen, i_plen),                            lookahead=barmerge.lookahead_off)
+htf_phb      = request.security(syminfo.tickerid, i_tf,
+                   not na(ta.pivothigh(i_plen, i_plen)) ?
+                     math.max(open[i_plen], close[i_plen]) : float(na),    lookahead=barmerge.lookahead_off)
+htf_plb      = request.security(syminfo.tickerid, i_tf,
+                   not na(ta.pivotlow(i_plen, i_plen)) ?
+                     math.min(open[i_plen], close[i_plen]) : float(na),    lookahead=barmerge.lookahead_off)
+htf_ph_time  = request.security(syminfo.tickerid, i_tf,
+                   time[i_plen],                                            lookahead=barmerge.lookahead_off)
+htf_pl_time  = request.security(syminfo.tickerid, i_tf,
+                   time[i_plen],                                            lookahead=barmerge.lookahead_off)
+htf_close    = request.security(syminfo.tickerid, i_tf,
+                   close,                                                   lookahead=barmerge.lookahead_off)
 
 // ══════════════════════════════════════════════════════════════
-// ARRAYS
+// HISTORIQUE HTF  –  une entrée par bougie HTF clôturée
+// Limité à MAX_HTF bougies HTF (suffisant pour tout timeframe graphique).
+// ══════════════════════════════════════════════════════════════
+MAX_HTF = 500
+
+var array<float> arr_ph      = array.new<float>()
+var array<float> arr_phb     = array.new<float>()
+var array<float> arr_pl      = array.new<float>()
+var array<float> arr_plb     = array.new<float>()
+var array<float> arr_close   = array.new<float>()
+var array<int>   arr_ph_time = array.new<int>()
+var array<int>   arr_pl_time = array.new<int>()
+
+bool new_htf_bar = ta.change(htf_bar_time) != 0
+if new_htf_bar
+    // [1] : valeurs de la bougie HTF qui vient de se clôturer
+    arr_ph.unshift     (htf_ph[1])
+    arr_phb.unshift    (htf_phb[1])
+    arr_pl.unshift     (htf_pl[1])
+    arr_plb.unshift    (htf_plb[1])
+    arr_close.unshift  (htf_close[1])
+    arr_ph_time.unshift(htf_ph_time[1])
+    arr_pl_time.unshift(htf_pl_time[1])
+    if arr_ph.size() > MAX_HTF
+        arr_ph.pop()
+        arr_phb.pop()
+        arr_pl.pop()
+        arr_plb.pop()
+        arr_close.pop()
+        arr_ph_time.pop()
+        arr_pl_time.pop()
+
+// ══════════════════════════════════════════════════════════════
+// ARRAYS (zones dessinées)
 // ══════════════════════════════════════════════════════════════
 var array<float> ht = array.new<float>()
 var array<float> hb = array.new<float>()
-var array<int>   hi = array.new<int>()    // bar_index de la bougie pivot
+var array<int>   hi = array.new<int>()
 var array<box>   hx = array.new<box>()
 var array<line>  hm = array.new<line>()
 
 var array<float> lt = array.new<float>()
 var array<float> lb = array.new<float>()
-var array<int>   li = array.new<int>()    // bar_index de la bougie pivot
+var array<int>   li = array.new<int>()
 var array<box>   lx = array.new<box>()
 var array<line>  lm = array.new<line>()
 
 // ══════════════════════════════════════════════════════════════
 // HELPERS
-// bar_l : bar_index de la bougie pivot  →  xloc.bar_index (par défaut)
-// Cela garantit que les rectangles suivent l'échelle et les déplacements du graphique
+// bar_l : timestamp de la bougie pivot, utilisé avec xloc.bar_time
 // ══════════════════════════════════════════════════════════════
 f_midline(int bar_l, float top, float bot) =>
     float mid = (top + bot) / 2.0
@@ -159,15 +182,14 @@ f_del_l(int idx) =>
     lm.remove(idx)
 
 // ══════════════════════════════════════════════════════════════
-// SCAN STATELESS  –  exécuté sur la dernière barre uniquement
-// Scan temporel du plus récent au plus ancien.
-// Règle : chaque nouveau HIGH doit avoir un WICK au-dessus du
-// wick précédent ; chaque nouveau LOW, un wick en-dessous.
-// Le chevauchement body/wick entre zones est accepté.
+// SCAN  –  exécuté sur la dernière barre uniquement
+// Itère sur l'historique HTF (une entrée par bougie HTF clôturée).
+// Règle ladder : wick-to-wick (z_top > last_h_top / z_bot < last_l_bot).
+// Mitigation : zone ignorée si une bougie HTF plus récente a clôturé
+//              au-delà de la mèche (seules les bougies clôturées comptent).
 // ══════════════════════════════════════════════════════════════
 if barstate.islast
 
-    // Effacer les zones précédentes
     while ht.size() > 0
         f_del_h(0)
     while lt.size() > 0
@@ -175,45 +197,40 @@ if barstate.islast
 
     int   found_h    = 0
     int   found_l    = 0
-    int   max_k      = math.min(bar_index, 5000)
-    float last_h_top = close   // wick de référence pour les hauts
-    float last_l_bot = close   // wick de référence pour les bas
+    int   n          = arr_ph.size()
+    float last_h_top = close
+    float last_l_bot = close
 
-    for k = 0 to max_k
+    for k = 0 to n - 1
         if found_h >= i_nb_h and found_l >= i_nb_l
             break
 
         // Pivot haut : accepté si son WICK est au-dessus du wick précédent
-        if found_h < i_nb_h and not na(htf_ph[k]) and na(htf_ph[k + 1])
-            float z_top = htf_ph[k]
-            float z_bot = htf_phb[k]
+        if found_h < i_nb_h and not na(arr_ph.get(k))
+            float z_top = arr_ph.get(k)
+            float z_bot = arr_phb.get(k)
             if not na(z_bot) and z_top > z_bot and z_top > last_h_top
-                // Mitigation : rejeté si une bougie plus récente a clôturé au-dessus du wick
-                bool mitigated_h = false
-                if k > 0
-                    for m = 0 to k - 1
-                        if htf_close[m] > z_top
-                            mitigated_h := true
-                            break
-                if not mitigated_h
-                    f_add_h(z_top, z_bot, htf_ph_time[k])
+                bool mitigated = false
+                for m = 0 to k - 1
+                    if arr_close.get(m) > z_top
+                        mitigated := true
+                        break
+                if not mitigated
+                    f_add_h(z_top, z_bot, arr_ph_time.get(k))
                     last_h_top := z_top
                     found_h   += 1
 
         // Pivot bas : accepté si son WICK est en-dessous du wick précédent
-        if found_l < i_nb_l and not na(htf_pl[k]) and na(htf_pl[k + 1])
-            float z_top = htf_plb[k]
-            float z_bot = htf_pl[k]
+        if found_l < i_nb_l and not na(arr_pl.get(k))
+            float z_top = arr_plb.get(k)
+            float z_bot = arr_pl.get(k)
             if not na(z_top) and z_top > z_bot and z_bot < last_l_bot
-                // Mitigation : rejeté si une bougie plus récente a clôturé en-dessous du wick
-                bool mitigated_l = false
-                if k > 0
-                    for m = 0 to k - 1
-                        if htf_close[m] < z_bot
-                            mitigated_l := true
-                            break
-                if not mitigated_l
-                    f_add_l(z_top, z_bot, htf_pl_time[k])
+                bool mitigated = false
+                for m = 0 to k - 1
+                    if arr_close.get(m) < z_bot
+                        mitigated := true
+                        break
+                if not mitigated
+                    f_add_l(z_top, z_bot, arr_pl_time.get(k))
                     last_l_bot := z_bot
                     found_l   += 1
-

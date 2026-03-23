@@ -18,7 +18,7 @@ The indicator scans backwards from the current bar to find the **N closest unvio
   - High zones: each new zone must have its **wick tip strictly above** the wick tip of the previous one
   - Low zones: each new zone must have its **wick tip strictly below** the wick tip of the previous one
   - Zones are ordered from closest to furthest wick from price; body overlap between adjacent zones is allowed and expected — it signals high-impact price areas touched by multiple pivot wicks
-- **Mitigation filter**: A pivot zone is skipped if any more recent HTF candle has closed beyond its wick tip (close > wick for highs, close < wick for lows) — only untested zones are displayed
+- **Mitigation filter**: A pivot zone is skipped if any more recent **closed** HTF candle has closed beyond its wick tip (close > wick for highs, close < wick for lows) — only untested zones are displayed; the current (forming) HTF bar is excluded from this check
 - **Midline**: Optional horizontal line at the center of each zone
 
 ## Parameters
@@ -44,13 +44,18 @@ The indicator scans backwards from the current bar to find the **N closest unvio
 
 ## Notes
 
-- The indicator runs a stateless full scan on the last bar only (`barstate.islast`), so it always reflects the current market state without accumulating state across bars
-- Historical buffer is set to 5000 bars (TradingView maximum), which covers approximately:
-  - ~208 days on H1 chart with H4 HTF
-  - ~52 days on M15 chart with H4 HTF
+- All calculations use **HTF bar space**: one sample is recorded per closed HTF bar, making results identical regardless of the chart timeframe
+- The scan runs on the last bar only (`barstate.islast`) and always reflects the current market state
+- HTF history is limited to the last 500 closed HTF bars, which is more than enough for any chart timeframe
 - If fewer than N qualifying pivots exist within the lookback window, fewer zones will be displayed
 
 ## Changelog
+
+### v1.4 — 2026-03-23
+
+- All calculations now use HTF bar space (one sample per closed HTF bar), eliminating timeframe-dependent behaviour (e.g. zones missing on 15-minute charts)
+- The current forming HTF bar is excluded from the mitigation check — only closed candles count
+- The chart timeframe is only used to anchor the start of drawn rectangles
 
 ### v1.3 — 2026-03-23
 
