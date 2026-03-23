@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.2
+// Version: 1.3
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_HTF_Swing_Zones
 //
 // Description: Draws supply/demand zones based on HTF swing highs and lows.
@@ -15,6 +15,9 @@
 //              - Configurable zone colors, border, and midline
 //
 // Changelog:
+//   v1.3 - 2026-03-23
+//     - Added mitigation filter: a zone is skipped if any more recent HTF candle
+//       has closed beyond the wick (close > wick for highs, close < wick for lows)
 //   v1.2 - 2026-03-21
 //     - Removed unused merge/fusion parameter and functions (dead code cleanup)
 //   v1.1 - 2026-03-20
@@ -70,6 +73,8 @@ htf_ph_time = request.security(syminfo.tickerid, i_tf,
 htf_pl_time = request.security(syminfo.tickerid, i_tf,
                 time[i_plen], lookahead=barmerge.lookahead_off)
 
+// Close HTF pour le filtre de mitigation
+htf_close = request.security(syminfo.tickerid, i_tf, close, lookahead=barmerge.lookahead_off)
 
 // Buffers étendus pour le scan rétrograde (accès dynamique series[k])
 max_bars_back(htf_ph,      5000)
@@ -78,6 +83,7 @@ max_bars_back(htf_phb,     5000)
 max_bars_back(htf_plb,     5000)
 max_bars_back(htf_ph_time, 5000)
 max_bars_back(htf_pl_time, 5000)
+max_bars_back(htf_close,   5000)
 max_bars_back(time,        5000)
 
 // ══════════════════════════════════════════════════════════════
@@ -182,16 +188,32 @@ if barstate.islast
             float z_top = htf_ph[k]
             float z_bot = htf_phb[k]
             if not na(z_bot) and z_top > z_bot and z_top > last_h_top
-                f_add_h(z_top, z_bot, htf_ph_time[k])
-                last_h_top := z_top
-                found_h   += 1
+                // Mitigation : rejeté si une bougie plus récente a clôturé au-dessus du wick
+                bool mitigated_h = false
+                if k > 0
+                    for m = 0 to k - 1
+                        if htf_close[m] > z_top
+                            mitigated_h := true
+                            break
+                if not mitigated_h
+                    f_add_h(z_top, z_bot, htf_ph_time[k])
+                    last_h_top := z_top
+                    found_h   += 1
 
         // Pivot bas : accepté si son WICK est en-dessous du wick précédent
         if found_l < i_nb_l and not na(htf_pl[k]) and na(htf_pl[k + 1])
             float z_top = htf_plb[k]
             float z_bot = htf_pl[k]
             if not na(z_top) and z_top > z_bot and z_bot < last_l_bot
-                f_add_l(z_top, z_bot, htf_pl_time[k])
-                last_l_bot := z_bot
-                found_l   += 1
+                // Mitigation : rejeté si une bougie plus récente a clôturé en-dessous du wick
+                bool mitigated_l = false
+                if k > 0
+                    for m = 0 to k - 1
+                        if htf_close[m] < z_bot
+                            mitigated_l := true
+                            break
+                if not mitigated_l
+                    f_add_l(z_top, z_bot, htf_pl_time[k])
+                    last_l_bot := z_bot
+                    found_l   += 1
 

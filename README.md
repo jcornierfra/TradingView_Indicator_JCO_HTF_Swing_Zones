@@ -18,6 +18,7 @@ The indicator scans backwards from the current bar to find the **N closest unvio
   - High zones: each new zone must have its **wick tip strictly above** the wick tip of the previous one
   - Low zones: each new zone must have its **wick tip strictly below** the wick tip of the previous one
   - Zones are ordered from closest to furthest wick from price; body overlap between adjacent zones is allowed and expected — it signals high-impact price areas touched by multiple pivot wicks
+- **Mitigation filter**: A pivot zone is skipped if any more recent HTF candle has closed beyond its wick tip (close > wick for highs, close < wick for lows) — only untested zones are displayed
 - **Midline**: Optional horizontal line at the center of each zone
 
 ## Parameters
@@ -30,7 +31,6 @@ The indicator scans backwards from the current bar to find the **N closest unvio
 | Nb zones High | 3 | Number of resistance zones to display above price |
 | Nb zones Low | 3 | Number of support zones to display below price |
 | Longueur pivot | 5 | Number of bars required on each side to confirm a pivot |
-| Fusion si dist. < (%) | 0.15 | Merge threshold — zones within this % distance are merged |
 
 ### Appearance
 
@@ -51,6 +51,14 @@ The indicator scans backwards from the current bar to find the **N closest unvio
 - If fewer than N qualifying pivots exist within the lookback window, fewer zones will be displayed
 
 ## Changelog
+
+### v1.3 — 2026-03-23
+
+- Added mitigation filter: a pivot zone is skipped if any more recent HTF candle has closed beyond its wick tip (close > wick for highs, close < wick for lows) — only untested zones are displayed
+
+### v1.2 — 2026-03-21
+
+- Removed unused merge/fusion parameter and functions (dead code cleanup)
 
 ### v1.1 — 2026-03-20
 
