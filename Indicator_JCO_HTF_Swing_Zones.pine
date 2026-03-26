@@ -1,7 +1,7 @@
 // This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // © jcornier
 //
-// Version: 1.5
+// Version: 1.6
 // GitHub: https://github.com/jcornierfra/TradingView_Indicator_JCO_HTF_Swing_Zones
 //
 // Description: Draws supply/demand zones based on HTF swing highs and lows.
@@ -16,6 +16,12 @@
 //              - Configurable zone colors, border, and midline
 //
 // Changelog:
+//   v1.6 - 2026-03-26
+//     - Fusion parameter: 3-option selector (Aucune / Totale / Exclusive).
+//       Exclusive: merged zone spans from highest wick tip to the wick tip just
+//       below (highs) or just above (lows). Default: Exclusive.
+//     - Cascade merge: after a primary merge, the result is checked against all
+//       previously found zones until no more overlap exists (while loop).
 //   v1.5 - 2026-03-23
 //     - Zone fusion: overlapping zones are merged into one (max extent, oldest timestamp).
 //       The zone counter decrements only once per merged group.
@@ -47,6 +53,8 @@ i_tf    = input.timeframe("240",  "Timeframe HTF",                         group
 i_nb_h  = input.int(3,   "Nb zones High",      minval=1,  maxval=10,       group=grpC)
 i_nb_l  = input.int(3,   "Nb zones Low",       minval=1,  maxval=10,       group=grpC)
 i_plen  = input.int(5,   "Longueur pivot",     minval=2,  maxval=20,       group=grpC)
+i_fmode = input.string("Exclusive", "Fusion",
+          options=["Aucune", "Totale", "Exclusive"],                         group=grpC)
 
 grpA = "Apparence"
 i_zcol  = input.color(color.new(color.gray, 85),  "Couleur zone",          group=grpA)
@@ -235,10 +243,27 @@ if barstate.islast
                         float pt = ht.get(ht.size() - 1)
                         float pb = hb.get(hb.size() - 1)
                         int   pi = hi.get(hi.size() - 1)
-                        if z_top >= pb and pt >= z_bot
-                            // Fusion : étendue max, timestamp le plus ancien
+                        if i_fmode != "Aucune" and z_top >= pb and pt >= z_bot
+                            // Fusion primaire
+                            float fbot = i_fmode == "Exclusive" ? pt : math.min(z_bot, pb)
                             f_del_h(ht.size() - 1)
-                            f_add_h(math.max(z_top, pt), math.min(z_bot, pb), math.min(ph_t, pi))
+                            f_add_h(z_top, fbot, math.min(ph_t, pi))
+                            // Cascade : la zone fusionnée peut désormais chevaucher la zone précédente
+                            while ht.size() >= 2
+                                float ct  = ht.get(ht.size() - 1)
+                                float cb  = hb.get(hb.size() - 1)
+                                int   ci  = hi.get(hi.size() - 1)
+                                float pt2 = ht.get(ht.size() - 2)
+                                float pb2 = hb.get(hb.size() - 2)
+                                int   pi2 = hi.get(hi.size() - 2)
+                                if ct >= pb2 and pt2 >= cb
+                                    float fbot2 = i_fmode == "Exclusive" ? pt2 : math.min(cb, pb2)
+                                    f_del_h(ht.size() - 1)
+                                    f_del_h(ht.size() - 1)
+                                    f_add_h(ct, fbot2, math.min(ci, pi2))
+                                    found_h -= 1
+                                else
+                                    break
                         else
                             f_add_h(z_top, z_bot, ph_t)
                             found_h += 1
@@ -262,10 +287,27 @@ if barstate.islast
                         float pt = lt.get(lt.size() - 1)
                         float pb = lb.get(lb.size() - 1)
                         int   pi = li.get(li.size() - 1)
-                        if z_top >= pb and pt >= z_bot
-                            // Fusion : étendue max, timestamp le plus ancien
+                        if i_fmode != "Aucune" and z_top >= pb and pt >= z_bot
+                            // Fusion primaire
+                            float ftop = i_fmode == "Exclusive" ? pb : math.max(z_top, pt)
                             f_del_l(lt.size() - 1)
-                            f_add_l(math.max(z_top, pt), math.min(z_bot, pb), math.min(pl_t, pi))
+                            f_add_l(ftop, z_bot, math.min(pl_t, pi))
+                            // Cascade : la zone fusionnée peut désormais chevaucher la zone précédente
+                            while lt.size() >= 2
+                                float ct  = lt.get(lt.size() - 1)
+                                float cb  = lb.get(lb.size() - 1)
+                                int   ci  = li.get(li.size() - 1)
+                                float pt2 = lt.get(lt.size() - 2)
+                                float pb2 = lb.get(lb.size() - 2)
+                                int   pi2 = li.get(li.size() - 2)
+                                if ct >= pb2 and pt2 >= cb
+                                    float ftop2 = i_fmode == "Exclusive" ? pb2 : math.max(ct, pt2)
+                                    f_del_l(lt.size() - 1)
+                                    f_del_l(lt.size() - 1)
+                                    f_add_l(ftop2, cb, math.min(ci, pi2))
+                                    found_l -= 1
+                                else
+                                    break
                         else
                             f_add_l(z_top, z_bot, pl_t)
                             found_l += 1

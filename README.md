@@ -19,7 +19,9 @@ The indicator scans backwards from the current bar to find the **N closest unvio
   - Low zones: each new zone must have its **wick tip strictly below** the wick tip of the previous one
   - Zones are ordered from closest to furthest wick from price; body overlap between adjacent zones is allowed and expected — it signals high-impact price areas touched by multiple pivot wicks
 - **Mitigation filter**: A pivot zone is skipped if any more recent **closed** HTF candle has closed beyond its wick tip (close > wick for highs, close < wick for lows) — only untested zones are displayed; the current (forming) HTF bar is excluded from this check
-- **Zone fusion**: Overlapping zones are automatically merged into one (maximum extent, anchored at the oldest pivot); the zone counter decrements only once per merged group
+- **Zone fusion**: Overlapping zones are automatically merged into one, anchored at the oldest pivot; the zone counter decrements only once per merged group
+  - *Fusion totale* (default): merged zone spans the full combined extent (max top, min bot)
+  - *Fusion exclusive*: merged zone spans only the exclusive portion of the outer zone — from the highest wick tip to the wick tip just below (highs), or from the wick tip just above to the lowest wick tip (lows)
 - **Midline**: Optional horizontal line at the center of each zone
 
 ## Parameters
@@ -32,6 +34,7 @@ The indicator scans backwards from the current bar to find the **N closest unvio
 | Nb zones High | 3 | Number of resistance zones to display above price |
 | Nb zones Low | 3 | Number of support zones to display below price |
 | Longueur pivot | 5 | Number of bars required on each side to confirm a pivot |
+| Fusion | Exclusive | Zone fusion mode: Aucune (none), Totale (full extent), Exclusive (wick-to-wick only) |
 
 ### Appearance
 
@@ -51,6 +54,11 @@ The indicator scans backwards from the current bar to find the **N closest unvio
 - If fewer than N qualifying pivots exist within the lookback window, fewer zones will be displayed
 
 ## Changelog
+
+### v1.6 — 2026-03-26
+
+- Fusion parameter: 3-option selector — *Aucune* (no fusion), *Totale* (full combined extent), *Exclusive* (wick-to-wick only). Default: Exclusive
+- Cascade merge: after a primary merge, the result is checked against all previously found zones in a loop until no more overlap exists
 
 ### v1.5 — 2026-03-23
 
